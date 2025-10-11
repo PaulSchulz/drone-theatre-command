@@ -1,0 +1,13 @@
+* Drone Theatre Command
+
+A strategy for emacs (written in elisp) that simulates a modern battle field with drones.
+
+* To run
+
+Download or clone the git repoitory, open emacs and 'load-file' the 'dtc.el' file. To run:
+
+M-x dtc-start
+
+The **DTC** buffer will be created if it doesn't exist.
+
+
