@@ -5,6 +5,9 @@
 ;;;  - Load/eval this buffer (M-x eval-buffer)
 ;;;  - Start with: M-x dtc-start
 ;;;  - Quit with: q (in DTC buffer) or M-x dtc-stop
+;;;
+;;; Comentary:
+;;;   Put something here.
 
 ;; Debugging/Testing
 ;; (dtc-get 'player) ;; (2 . 1)
@@ -72,11 +75,14 @@
   (dtc-set 'turn 0)
   (dtc-set 'walls nil)
   (dtc-set 'goal '())
-  (dtc-set 'player (cons 10 10))
-  (dtc-set 'enemies nil)
+  (dtc-set 'player (cons 10.0 10.0))
   (dtc-set 'entities nil)
   (message "World initialized (%dx%d)" (dtc-get 'width) (dtc-get 'height))
   dtc-world)
+
+;; TODO:L Add check for if dtc-world is non-nil
+(defun dtc-clear-world ()
+  (clrhash dtc-world))
 
 (defun dtc-get (key)
   "Return KEY from `dtc-world`."
@@ -92,31 +98,87 @@
   (cdr (assoc key alist)))
 
 (defun dtc-assoc-set (key value alist)
-  "Set the value associated with KEY in the A-list ALIST."
+  "Set the VALUE associated with KEY in the A-list ALIST."
   (if (assoc key alist)
       (setcdr (assoc key alist) value)
     (push (cons key value) alist))
   alist)
 
+;; (defun dtc-get-occupied-positions ()
+;;   "Return a list of all positions currently occupied by entities."
+;;   (mapcar (lambda (obj) (dtc-assoc-get 'pos obj)) (dtc-get 'entities)))
+
 (defun dtc-get-occupied-positions ()
-  "Return a list of all positions currently occupied by entities."
-  (mapcar (lambda (obj) (dtc-assoc-get 'pos obj)) (dtc-get 'entities)))
+  "Return a list of all integer grid positions currently occupied by entities."
+  (mapcar #'dtc-to-grid (mapcar (lambda (obj) (dtc-assoc-get 'pos obj)) (dtc-get 'entities))))
+
+;; (defun dtc-free-p (x y &optional ignore-entities)
+;;   "Return t if X,Y is walkable.
+;; When IGNORE-ENTITIES is non-nil, entities are ignored."
+;;   (and (dtc-in-bounds-p x y)
+;;        (not (member (cons x y) (dtc-get 'walls)))
+;;        (not (dtc-pos-equal-p (cons x y) (dtc-get 'player)))
+;;        (or ignore-entities (not (member (cons x y) (dtc-get-occupied-positions))))))
+
+;; (defun dtc-free-p (x y &optional ignore-entities)
+;;   "Return t if X,Y are the integer coordinates of a walkable tile."
+;;   (let ((grid-pos (cons (truncate x) (truncate y))) ; <--- Truncate X/Y for grid check
+;;         (player-grid-pos (dtc-to-grid (dtc-get 'player)))) ; <--- Player's current grid pos
+;;     (and (dtc-in-bounds-p x y)
+;;          (not (member grid-pos (dtc-get 'walls))) ; Check wall list against integer grid pos
+;;          (not (dtc-pos-equal-p grid-pos player-grid-pos)) ; Compare grid positions
+;;          (or ignore-entities (not (member grid-pos (dtc-get-occupied-positions)))))))
+
+;; (defun dtc-free-p (x y &optional ignore-entities)
+;;   "Return t if X,Y are the integer coordinates of a walkable tile."
+;;   (let ((grid-pos (cons (truncate x) (truncate y))) ; Destination grid position
+;;         (player-grid-pos (dtc-to-grid (dtc-get 'player)))) ; Current player grid position
+
+;;     (and (dtc-in-bounds-p x y)
+;;          (not (member grid-pos (dtc-get 'walls))) ; Check wall list against integer grid pos
+;;          ;; Check against player ONLY if moving to a *different* grid cell
+;;          (or (dtc-pos-equal-p grid-pos player-grid-pos)
+;;              (not (member grid-pos (dtc-get-occupied-positions))))
+;;          ;; Check entities ONLY if moving to a *different* grid cell
+;;          (or ignore-entities (not (member grid-pos (dtc-get-occupied-positions)))))))
 
 (defun dtc-free-p (x y &optional ignore-entities)
-  "Return t if X,Y is walkable. When IGNORE-ENTITIES is non-nil, entities are ignored."
-  (and (dtc-in-bounds-p x y)
-       (not (member (cons x y) (dtc-get 'walls)))
-       (not (dtc-pos-equal-p (cons x y) (dtc-get 'player)))
-       ;; *** CHANGE THIS LINE ***
-       (or ignore-entities (not (member (cons x y) (dtc-get-occupied-positions))))))
+  "Return t if X,Y are the integer coordinates of a walkable tile.
+The coordinates X and Y are treated as floats, truncated to check the grid cell."
+  (let ((grid-pos (cons (truncate x) (truncate y))) ; Destination grid position
+        (player-grid-pos (dtc-to-grid (dtc-get 'player)))) ; Current player grid position
+
+    (and (dtc-in-bounds-p x y)
+         ;; 1. Must not be a wall
+         (not (member grid-pos (dtc-get 'walls)))
+
+         ;; 2. Must not be the grid cell currently occupied by the player
+         (not (dtc-pos-equal-p grid-pos player-grid-pos))
+
+         ;; 3. Check entities only if requested (i.e., not when checking entity movement)
+         (or ignore-entities (not (member grid-pos (dtc-get-occupied-positions)))))))
 
 ;; Checks
 ;; (dtc-get 'width)  ;; 40
 ;; (dtc-get 'height) ;; 20
 
 ;; ---------------------------------------------------------------------------
+;; Utilities: Handling sub-grid modement
+;; ---------------------------------------------------------------------------
+(defvar dtc-unit-speed 1.0 "The distance covered by the player in one move (float).")
+
+(defun dtc-to-grid (pos)
+  "Convert float position POS (cons of floats) to integer grid position (cons of integers) by truncation."
+  (cons (truncate (car pos)) (truncate (cdr pos))))
+
+(defun dtc-grid-x (pos) "Return truncated X grid coordinate of POS." (truncate (car pos)))
+(defun dtc-grid-y (pos) "Return truncated Y grid coordinate of POS." (truncate (cdr pos)))
+
+
+;; ---------------------------------------------------------------------------
 ;; Utilities: coordinates and random open tile
 ;; ---------------------------------------------------------------------------
+;; TODO: Maybe rename this to dtc-pos-make
 (defun dtc-make-pos (x y)
   "Return a cons cell representing a position with X and Y."
   (cons x y))
@@ -142,7 +204,9 @@ the first available tile, or signal an error if none exist."
          (h (truncate (dtc-get 'height)))
          pos ok
          (attempts 0)
-         (max-attempts 1000))
+         (max-attempts 1000)
+         (occupied (dtc-get-occupied-positions))
+         )
     (unless (and (integerp w) (integerp h) (> w 0) (> h 0))
       (error "dtc-world has invalid width/height: %s x %s" w h))
     ;; Try random sampling first (fast)
@@ -150,9 +214,8 @@ the first available tile, or signal an error if none exist."
       (setq pos (cons (random w) (random h))) ;; now guaranteed integers
       (setq ok (and (dtc-in-bounds-p (car pos) (cdr pos))
                     (not (member pos (dtc-get 'walls)))
-                    (not (member pos (dtc-get 'enemies)))
+                    (not (member pos occupied))
                     (not (dtc-pos-equal-p pos (dtc-get 'player)))
-                    ;;(or ignore-entities (not (member (cons x y) (dtc-get-occupied-positions))))
                     ))
       (setq attempts (1+ attempts)))
     (if ok
@@ -164,9 +227,8 @@ the first available tile, or signal an error if none exist."
             (let ((p (cons x y)))
               (when (and (dtc-in-bounds-p x y)
                          (not (member p (dtc-get 'walls)))
-                         (not (member p (dtc-get 'enemies)))
+                         (not (member p occupied))
                          (not (dtc-pos-equal-p p (dtc-get 'player)))
-                         ;;(or ignore-entities (not (member (cons x y) (dtc-get-occupied-positions))))
                          )
                 (throw 'found p)))))
         (error "No open tile available on the map")))))
@@ -193,26 +255,32 @@ the first available tile, or signal an error if none exist."
 ;;       (push (dtc-random-open-tile) e))
 ;;     e))
 
-(defun dtc-generate-enemies (n)
-  "Place N enemies at random open positions, replacing any existing list."
-  (let ((enemies nil)
-        (w (dtc-get 'width))
-        (h (dtc-get 'height)))
-    (dotimes (_ n)
-      (let ((pos (dtc-random-open-tile)))
-        (push pos enemies)))
-    ;; (dtc-set 'enemies enemies)
-    enemies))
+;; (defun dtc-generate-enemies (n)
+;;   "Place N enemies at random open positions, replacing any existing list."
+;;   (let ((enemies nil)
+;;         (w (dtc-get 'width))
+;;         (h (dtc-get 'height)))
+;;     (dotimes (_ n)
+;;       (let ((pos (dtc-random-open-tile)))
+;;         (push pos enemies)))
+;;     ;; (dtc-set 'enemies enemies)
+;;     enemies))
 
 ;; (dtc-generate-enemies 3) ((21 . 6) (0 . 19) (25 . 16))
 
-(defun dtc-create-entity (char face logic)
-  "Create a new entity A-list with a random open position."
+(defun dtc-create-entity (char face logic speed)
+  "Create a new entity A-list with a random open position.
+CHAR is the character to display, FACE is the font-face to use and LOGIC
+is a function that controls the entities behaviour, and SPEED which is
+assumed to be a float."
   (let ((pos (dtc-random-open-tile)))
     `((pos . ,pos)
       (char . ,char)
       (face . ,face)
-      (logic . ,logic))))
+      (logic . ,logic)
+      (speed . ,speed))))
+
+;; (dtc-create-entity "%"  'dtc-enemy-face nil) ;; ((pos 9 . 13) (char . "%") (face . dtc-enemy-face) (logic))
 
 (defun dtc-generate-basic-world (&optional width height)
   "Create a basic world layout: walls, player, goal, enemies.
@@ -236,23 +304,24 @@ The size of the theatre is given by WIDTH and HEIGHT."
   ;; goal near bottom-right
   (dtc-set 'goal (cons (- (dtc-get 'width) 2) (- (dtc-get 'height) 2)))
   ;; enemies
-  (dtc-set 'enemies (dtc-generate-enemies (+ 3 (random 3))))
+  (dtc-set 'entities
+           (list
+            ;; Simple Enemy (old "X")
+            (dtc-create-entity "X" 'dtc-enemy-face 'dtc-chase-logic 1.0)
+            (dtc-create-entity "X" 'dtc-enemy-face 'dtc-chase-logic 1.0)
+
+            ;; Heavy Enemy (new type, different face/logic)
+            (dtc-create-entity "H" 'dtc-heavy-enemy-face 'dtc-chase-logic 1.5)
+
+            ;; Friendly Guard (new type, different character/logic)
+            (dtc-create-entity "G" 'dtc-guard-face 'dtc-patrol-logic 0.5)
+            (dtc-create-entity "G" 'dtc-guard-face 'dtc-patrol-logic 0.5)))
   (dtc-set 'score 0)
   (dtc-set 'turn 0)
   (dtc-get 'player))
 
 ;; (dtc-random-open-tile) ;nil
 ;; (dtc-generate-enemies (+ 3 (random 3))) ; (nil nil nil)
-
-;; ---------------------------------------------------------------------------
-;; Free tile test
-;; ---------------------------------------------------------------------------
-;; (defun dtc-free-p (x y &optional ignore-enemies)
-;;   "Return t if X,Y is walkable. When IGNORE-ENEMIES is non-nil, enemies are ignored."
-;;   (and (dtc-in-bounds-p x y)
-;;        (not (member (cons x y) (dtc-get 'walls)))
-;;        (not (dtc-pos-equal-p (cons x y) (dtc-get 'player)))
-;;        (or ignore-enemies (not (member (cons x y) (dtc-get 'enemies))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Rendering
@@ -303,13 +372,12 @@ The size of the theatre is given by WIDTH and HEIGHT."
   (let* ((buf (get-buffer-create dtc-buffer-name))
          (w (dtc-get 'width))
          (h (dtc-get 'height))
-         (player (dtc-get 'player))
-         (enemies (dtc-get 'enemies))
+         ;; (player (dtc-get 'player))
+         (player-pos (dtc-to-grid (dtc-get 'player))) ; <--- Get integer player pos
          (walls (dtc-get 'walls))
          (goal (dtc-get 'goal)))
 
-    (message "Player: %S" (dtc-get 'player))
-    (message "Enemies: %S" (dtc-get 'enemies))
+    (message "Player: %S (Grid: %S)" (dtc-get 'player) player-pos) ; <--- Update debug message
     (message "Walls: %d" (length (dtc-get 'walls)))
 
     (with-current-buffer buf
@@ -317,23 +385,34 @@ The size of the theatre is given by WIDTH and HEIGHT."
         (erase-buffer)
         (dotimes (y h)
           (dotimes (x w)
-            (cond
-             ((dtc-pos-equal-p (cons x y) player)
-              ;; (insert "@"))
-              (insert (propertize "@" 'font-lock-face 'dtc-player-face)))
-             ((member (cons x y) enemies)
-              ;; (insert "X"))
-              (insert (propertize "X" 'font-lock-face 'dtc-enemy-face)))
-             ((dtc-pos-equal-p (cons x y) goal)
-              ;; (insert "$"))
-              (insert (propertize "$" 'font-lock-face 'dtc-goal-face)))
-             ((member (cons x y) walls)
-              ;; (insert "U"))
-              (insert (propertize "U" 'font-lock-face 'dtc-wall-face)))
-             (t
-              ;; (insert "."))
-              (insert (propertize "." 'font-lock-face 'dtc-floor-face)))
-             ))
+
+            (let* ((current-pos (cons x y))
+                   ;; Find if any entity is at this position
+                   (entity (cl-find current-pos (dtc-get 'entities)
+                                    ;; :key (lambda (obj) (dtc-assoc-get 'pos obj))
+                                    :key (lambda (ent) (dtc-to-grid (dtc-assoc-get 'pos ent)))
+                                    :test 'dtc-pos-equal-p)))
+
+              (cond
+               ((dtc-pos-equal-p current-pos player-pos) ; <--- Compare to integer player pos
+                ;;((dtc-pos-equal-p (cons x y) player)
+                ;; (insert "@"))
+                (insert (propertize "@" 'font-lock-face 'dtc-player-face)))
+               ((dtc-pos-equal-p (cons x y) goal)
+                ;; (insert "$"))
+                (insert (propertize "$" 'font-lock-face 'dtc-goal-face)))
+               ((member (cons x y) walls)
+                ;; (insert "U"))
+                (insert (propertize "U" 'font-lock-face 'dtc-wall-face)))
+
+               (entity
+                (insert (propertize (dtc-assoc-get 'char entity)
+                                    'font-lock-face (dtc-assoc-get 'face entity))))
+
+               (t
+                ;; (insert "."))
+                (insert (propertize "." 'font-lock-face 'dtc-floor-face)))
+               )))
           (insert "\n")))
       (goto-char (point-min))
       (setq buffer-read-only t)
@@ -345,69 +424,214 @@ The size of the theatre is given by WIDTH and HEIGHT."
 ;; ---------------------------------------------------------------------------
 ;; Movement: player
 ;; ---------------------------------------------------------------------------
+;; (defun dtc-move-player (dx dy)
+;;   "Attempt to move player by DX,DY. Return t if moved."
+;;   (let* ((p (dtc-get 'player))
+;;          (nx (+ (car p) dx))
+;;          (ny (+ (cdr p) dy)))
+;;     (when (dtc-free-p nx ny)
+;;       (dtc-set 'player (cons nx ny))
+;;       t)))
+
 (defun dtc-move-player (dx dy)
   "Attempt to move player by DX,DY. Return t if moved."
   (let* ((p (dtc-get 'player))
-         (nx (+ (car p) dx))
-         (ny (+ (cdr p) dy)))
-    (when (dtc-free-p nx ny)
-      (dtc-set 'player (cons nx ny))
+         (nx (+ (car p) (* (float dx) dtc-unit-speed))) ; <--- Use float speed constant
+         (ny (+ (cdr p) (* (float dy) dtc-unit-speed)))
+         (new-pos (cons nx ny)))
+    ;; Check collision against the new grid cell the player moves into
+    (when (dtc-free-p (dtc-grid-x new-pos) (dtc-grid-y new-pos))
+      (dtc-set 'player new-pos) ; Store the new float position
       t)))
 
-(defun dtc-move-up ()    (interactive) (when (dtc-move-player 0 -1) (dtc-tick)))
-(defun dtc-move-down ()  (interactive) (when (dtc-move-player 0  1) (dtc-tick)))
-(defun dtc-move-left ()  (interactive) (when (dtc-move-player -1 0) (dtc-tick)))
-(defun dtc-move-right () (interactive) (when (dtc-move-player  1 0) (dtc-tick)))
+(defun dtc-move-up ()    (interactive) (when (dtc-move-player 0 -1) (dtc-player-tick)))
+(defun dtc-move-down ()  (interactive) (when (dtc-move-player 0  1) (dtc-player-tick)))
+(defun dtc-move-left ()  (interactive) (when (dtc-move-player -1 0) (dtc-player-tick)))
+(defun dtc-move-right () (interactive) (when (dtc-move-player  1 0) (dtc-player-tick)))
 
 ;; ---------------------------------------------------------------------------
 ;; Enemy movement (simple chase behaviour)
 ;; ---------------------------------------------------------------------------
-(defun dtc-move-enemy-once (pos)
-  "Return a new position for enemy POS moving one step toward player if possible."
-  (let* ((px (car (dtc-get 'player)))
-         (py (cdr (dtc-get 'player)))
-         (ex (car pos))
-         (ey (cdr pos))
-         (dx (cond ((< ex px) 1) ((> ex px) -1) (t 0)))
-         (dy (cond ((< ey py) 1) ((> ey py) -1) (t 0)))
-         (try-dirs (list (cons dx 0) (cons 0 dy) (cons dx dy) '(0 . 0)))
-         new-pos)
-    (setq new-pos pos)
-    (catch 'moved
-      (dolist (dir try-dirs)
-        (let ((nx (+ ex (car dir))) (ny (+ ey (cdr dir))))
-          (when (dtc-free-p nx ny)
-            (setq new-pos (cons nx ny))
-            (throw 'moved t)))))
-    new-pos))
+(defun dtc-move-towards (pos target-pos speed)
+  "Calculate the next float position of POS moving SPEEP toward TARGET-POS."
+  (let* ((dx (cond ((< (car pos) (car target-pos)) speed) ((> (car pos) (car target-pos)) (- speed)) (t 0.0)))
+         (dy (cond ((< (cdr pos) (cdr target-pos)) speed) ((> (cdr pos) (cdr target-pos)) (- speed)) (t 0.0)))
+         (nx (+ (car pos) dx))
+         (ny (+ (cdr pos) dy))
+         (new-pos (cons nx ny)))
 
-(defun dtc-move-enemies ()
-  "Move each enemy one step (chase player)."
-  (let ((new (mapcar #'dtc-move-enemy-once (dtc-get 'enemies))))
-    (dtc-set 'enemies new)
-    new))
+    ;; Use dtc-free-p to check the *destination grid cell* for walls/player
+    ;; We pass T for ignore-entities, as sub-cell movement doesn't use the grid for entity collision.
+    (if (dtc-free-p (dtc-grid-x new-pos) (dtc-grid-y new-pos) t)
+        new-pos
+      pos))) ; Return original position if next grid cell is blocked
+
+;; (defun dtc-chase-logic (entity)
+;;   "Entity AI: Move one step toward the player."
+;;   (let* ((old-pos (dtc-assoc-get 'pos entity))
+;;          ;; dtc-move-enemy-once is still useful for calculating the new position
+;;          (new-pos (dtc-move-enemy-once old-pos)))
+;;     (if (dtc-pos-equal-p old-pos new-pos)
+;;         entity ; No move, return original
+;;       (dtc-assoc-set 'pos new-pos entity)))) ; Moved, update position
+
+(defun dtc-chase-logic (entity)
+  "Entity AI: Move one step toward the player."
+  (let* ((old-pos (dtc-assoc-get 'pos entity))
+         (speed (dtc-assoc-get 'speed entity))
+         (player-pos (dtc-get 'player))
+         (new-pos (dtc-move-towards old-pos player-pos speed))) ; <--- Use new helper
+    (if (dtc-pos-equal-p old-pos new-pos)
+        entity
+      (dtc-assoc-set 'pos new-pos entity))))
+
+;; (defun dtc-patrol-logic (entity)
+;;   "Entity AI: Move in a random direction if possible."
+;;   (let* ((old-pos (dtc-assoc-get 'pos entity))
+;;          (dx (- (random 3) 1)) ; -1, 0, or 1
+;;          (dy (- (random 3) 1))
+;;          (nx (+ (car old-pos) dx))
+;;          (ny (+ (cdr old-pos) dy)))
+;;     (if (dtc-free-p nx ny)
+;;         ;; Update position using your helper
+;;         (dtc-assoc-set 'pos (cons nx ny) entity)
+;;       entity))) ; Cannot move, return original entity
+
+(defun dtc-patrol-logic (entity)
+  "Entity AI: Move in a random direction if possible."
+  (let* ((old-pos (dtc-assoc-get 'pos entity))
+         (speed (dtc-assoc-get 'speed entity))
+         (dx (* speed (- (random 3) 1.0))) ; Use float for multiplication
+         (dy (* speed (- (random 3) 1.0)))
+         (nx (+ (car old-pos) dx))
+         (ny (+ (cdr old-pos) dy))
+         (new-pos (cons nx ny)))
+
+    ;; Check collision using the new grid position
+    (if (dtc-free-p (dtc-grid-x new-pos) (dtc-grid-y new-pos) t)
+        (dtc-assoc-set 'pos new-pos entity)
+      entity)))
+
+;; (defun dtc-move-enemy-once (pos)
+;;   "Return a new position for enemy POS moving one step toward player if possible."
+;;   (let* ((px (car (dtc-get 'player)))
+;;          (py (cdr (dtc-get 'player)))
+;;          (ex (car pos))
+;;          (ey (cdr pos))
+;;          (dx (cond ((< ex px) 1) ((> ex px) -1) (t 0)))
+;;          (dy (cond ((< ey py) 1) ((> ey py) -1) (t 0)))
+;;          (try-dirs (list (cons dx 0) (cons 0 dy) (cons dx dy) '(0 . 0)))
+;;          new-pos)
+;;     (setq new-pos pos)
+;;     (catch 'moved
+;;       (dolist (dir try-dirs)
+;;         (let ((nx (+ ex (car dir))) (ny (+ ey (cdr dir))))
+;;           (when (dtc-free-p nx ny)
+;;             (setq new-pos (cons nx ny))
+;;             (throw 'moved t)))))
+;;     new-pos))
+
+;; (defun dtc-move-enemies ()
+;;   "Move each enemy one step (chase player)."
+;;   (let ((new (mapcar #'dtc-move-enemy-once (dtc-get 'enemies))))
+;;     (dtc-set 'enemies new)
+;;     new))
+
+;; (defun dtc-update-entities ()
+;;   "Iterate through all entities and execute their logic functions."
+;;   (let ((updated-entities
+;;          (mapcar (lambda (obj)
+;;                    (let ((logic-fn (dtc-assoc-get 'logic obj)))
+;;                      ;; Execute the logic function stored in the entity
+;;                      (funcall logic-fn obj)))
+;;                  (dtc-get 'entities))))
+;;     (dtc-set 'entities updated-entities)))
+
+(defun dtc-update-entities ()
+  "Iterate through all entities and execute their logic functions based on speed."
+  (let ((updated-entities
+         (mapcar (lambda (entity)
+                   (let ((speed (dtc-assoc-get 'speed entity))
+                         (logic-fn (dtc-assoc-get 'logic entity)))
+
+                     ;; Ensure speed is a number (default to 1.0) and logic exists
+                     (unless (numberp speed)
+                       (setq speed 1.0))
+
+                     ;; The logic function must return the updated object.
+                     ;; Truncate speed to get the whole number of steps (e.g., 1.5 -> 1 step).
+                     (dotimes (_ (truncate speed) entity)
+                       (setq entity (funcall logic-fn entity))))
+                   entity)
+                 (dtc-get 'entities)))) ; <--- FIX: This was moved inside the mapcar call
+
+    (dtc-set 'entities updated-entities)))
 
 ;; ---------------------------------------------------------------------------
+;; Timer Loop
+;; ---------------------------------------------------------------------------
+(defvar dtc-timer nil "Holds the timer object for the main game loop.")
+(defvar dtc-tick-rate 0.5 "Seconds between automatic ticks (e.g., 0.5 for half a second).")
+
+(defun dtc-start-main-loop ()
+  "Start the asynchronous game loop timer."
+  (interactive)
+  ;; Stop any existing timer first
+  (dtc-stop-main-loop)
+
+  ;; Create a new timer that runs dtc-auto-tick every dtc-tick-rate seconds.
+  (setq dtc-timer (run-with-timer dtc-tick-rate dtc-tick-rate #'dtc-auto-tick)))
+
+(defun dtc-stop-main-loop ()
+  "Stop the asynchronous game loop timer."
+  (interactive)
+  (when dtc-timer
+    (cancel-timer dtc-timer)
+    (setq dtc-timer nil)
+    (message "DTC automatic loop stopped.")))
+
+;;---------------------------------------------------------------------------
 ;; Tick/update loop
 ;; ---------------------------------------------------------------------------
-(defun dtc-tick ()
-  "Advance the game one tick: move enemies, check collisions, render, and increment turn."
-  (dtc-move-enemies)
-  (dtc-inc-turn)
+(defun dtc-auto-tick ()
+  "The game loop called by the timer. Updates the entities and renders the screen."
+  ;; Only update and render if the game buffer is visible (optional, but good practice)
+  (when (get-buffer dtc-buffer-name)
+    (dtc-update-entities)
+    (dtc-check-state)
+    (dtc-render)))
+
+(defun dtc-player-tick ()
+  "Called after the player successfully moves. Increments turn and triggers one entity update."
+  (dtc-inc-turn) ; Only increment turn on player move
   (dtc-check-state)
   (dtc-render))
+
+;; (defun dtc-tick ()
+;;   "Advance the game one tick: move enemies, check collisions, render, and increment turn."
+;;   (dtc-update-entities)
+;;   (dtc-inc-turn)
+;;   (dtc-check-state)
+;;   (dtc-render))
 
 (defun dtc-inc-turn ()
   (dtc-set 'turn (1+ (dtc-get 'turn))))
 
 (defun dtc-check-state ()
   "Check basic win/lose conditions and print messages into the buffer."
-  (let ((player (dtc-get 'player))
-        (enemies (dtc-get 'enemies))
+  (let ((player-grid-pos (dtc-to-grid (dtc-get 'player))) ; Player's current grid position
         (goal (dtc-get 'goal)))
-    (when (member player enemies)
-      (dtc-show-message "💀 You were caught by an enemy. Press q to quit."))
-    (when (dtc-pos-equal-p player goal)
+
+    ;; 1. Check for collision with hostile entities
+    (dolist (entity (dtc-get 'entities))
+      (when (and (dtc-pos-equal-p player-grid-pos (dtc-to-grid (dtc-assoc-get 'pos entity)))
+                 (member (dtc-assoc-get 'logic entity) '(dtc-chase-logic)))
+        (dtc-show-message (format "💀 You were caught by a %s. Press q to quit."
+                                  (dtc-assoc-get 'char entity)))
+        (return)))
+
+    ;; 2. Check for win condition
+    (when (dtc-pos-equal-p player-grid-pos goal) ; <--- FIX: Use player-grid-pos
       (dtc-show-message "🎉 You reached the goal. Press q to quit."))))
 
 (defun dtc-show-message (msg)
@@ -434,28 +658,36 @@ The size of the theatre is given by WIDTH and HEIGHT."
       (dtc-init-world)
       (dtc-generate-basic-world)
       (dtc-render))
+    (dtc-start-main-loop) ;
     (goto-char (point-min))
     (message "Drone Theatre Command initialized in buffer %s" dtc-buffer-name)))
 
 (defun dtc-stop ()
   "Stop DTC and kill the buffer."
   (interactive)
+  (dtc-stop-main-loop)
   (when (get-buffer dtc-buffer-name)
     (kill-buffer dtc-buffer-name)
     (message "DTC stopped.")))
 
 ;; ---------------------------------------------------------------------------
-;; Convenience: evaluate a single-expression test to step enemies manually
-;; ---------------------------------------------------------------------------
-(defun dtc-step-enemies ()
-  "Move enemies without moving the player (dev helper)."
-  (interactive)
-  (dtc-move-enemies)
-  (dtc-render))
-
-;; ---------------------------------------------------------------------------
 ;; DTC world reset (safe and clean) -------------------------
 ;; ---------------------------------------------------------------------------
+;; (defun dtc-reset-world ()
+;;   "Reset the Drone Theatre Command world to a fresh state."
+;;   (interactive)
+;;   (let* ()
+;;     (clrhash dtc-world)
+;;     (dtc-init-world)
+;;     (dtc-generate-basic-world)
+
+;;     ;; Optional: clear and redraw
+;;     (when (fboundp 'dtc-render)
+;;       (dtc-render))
+
+;;     (message "DTC world reset: %dx%d with %d enemies"
+;;              w h num-enemies)))
+
 (defun dtc-reset-world ()
   "Reset the Drone Theatre Command world to a fresh state."
   (interactive)
@@ -468,8 +700,8 @@ The size of the theatre is given by WIDTH and HEIGHT."
     (when (fboundp 'dtc-render)
       (dtc-render))
 
-    (message "DTC world reset: %dx%d with %d enemies"
-             w h num-enemies)))
+    ;; FIX: Replaced unbound variables w, h, num-enemies
+    (message "DTC world reset: %dx%d" (dtc-get 'width) (dtc-get 'height))))
 
 ;; --- Run it immediately ---
 ;; (dtc-reset-world)
