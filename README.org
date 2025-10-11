@@ -10,6 +10,7 @@ Download or clone the git repoitory, open emacs and 'load-file' the 'dtc.el' fil
 
 M-x dtc-start
 
-The **DTC** buffer will be created if it doesn't exist.
+The *DTC* buffer will be created if it doesn't exist.
 
-
+** Keys
+- Up, Down, Left, Right - Moves the player '@'
