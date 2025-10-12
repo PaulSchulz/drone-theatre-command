@@ -108,22 +108,39 @@
   "Return a list of all integer grid positions currently occupied by entities."
   (mapcar #'dtc-to-grid (mapcar (lambda (obj) (dtc-assoc-get 'pos obj)) (dtc-get 'entities))))
 
+;; (defun dtc-free-p (x y &optional ignore-entities)
+;;   "Return t if X,Y are the integer coordinates of a walkable tile.
+;; The coordinates X and Y are treated as floats, truncated to check the grid cell.
+;; The IGNORE-ENTITIES switch allows entities to not be considered."
+;;   (let ((grid-pos (cons (truncate x) (truncate y))) ; Destination grid position
+;;         (player-grid-pos (dtc-to-grid (dtc-get 'player)))) ; Current player grid position
+
+;;     (and (dtc-in-bounds-p x y)
+;;          ;; 1. Must not be a wall
+;;          (not (member grid-pos (dtc-get 'walls)))
+
+;;          ;; 2. Must not be the grid cell currently occupied by the player
+;;          (not (dtc-pos-equal-p grid-pos player-grid-pos))
+
+;;          ;; 3. Check entities only if requested (i.e., not when checking entity movement)
+;;          (or ignore-entities (not (member grid-pos (dtc-get-occupied-positions)))))))
+
 (defun dtc-free-p (x y &optional ignore-entities)
   "Return t if X,Y are the integer coordinates of a walkable tile.
 The coordinates X and Y are treated as floats, truncated to check the grid cell.
 The IGNORE-ENTITIES switch allows entities to not be considered."
-  (let ((grid-pos (cons (truncate x) (truncate y))) ; Destination grid position
-        (player-grid-pos (dtc-to-grid (dtc-get 'player)))) ; Current player grid position
+  (let ((grid-pos (cons (truncate x) (truncate y)))
+        (player-grid-pos (dtc-to-grid (dtc-get 'player))))
 
     (and (dtc-in-bounds-p x y)
-         ;; 1. Must not be a wall
-         (not (member grid-pos (dtc-get 'walls)))
+         ;; 1. Must not be a wall (FIX: Use cl-find for value comparison)
+         (not (cl-find grid-pos (dtc-get 'walls) :test 'dtc-pos-equal-p))
 
          ;; 2. Must not be the grid cell currently occupied by the player
          (not (dtc-pos-equal-p grid-pos player-grid-pos))
 
-         ;; 3. Check entities only if requested (i.e., not when checking entity movement)
-         (or ignore-entities (not (member grid-pos (dtc-get-occupied-positions)))))))
+         ;; 3. Check entities only if requested (FIX: Use cl-find for value comparison)
+         (or ignore-entities (not (cl-find grid-pos (dtc-get-occupied-positions) :test 'dtc-pos-equal-p))))))
 
 ;; Checks
 ;; (dtc-get 'width)  ;; 40
@@ -342,15 +359,13 @@ The size of the theatre is given by WIDTH and HEIGHT."
 
               (cond
                ((dtc-pos-equal-p current-pos player-pos) ; <--- Compare to integer player pos
-                ;;((dtc-pos-equal-p (cons x y) player)
-                ;; (insert "@"))
                 (insert (propertize "@" 'font-lock-face 'dtc-player-face)))
-               ((dtc-pos-equal-p (cons x y) goal)
-                ;; (insert "$"))
+
+               ((dtc-pos-equal-p current-pos goal)
                 (insert (propertize "$" 'font-lock-face 'dtc-goal-face)))
-               ((member (cons x y) walls)
-                ;; (insert "U"))
-                (insert (propertize "U" 'font-lock-face 'dtc-wall-face)))
+
+               ((cl-find current-pos walls :test 'dtc-pos-equal-p)
+                (insert (propertize "#" 'font-lock-face 'dtc-wall-face)))
 
                (entity
                 (insert (propertize (dtc-assoc-get 'char entity)
