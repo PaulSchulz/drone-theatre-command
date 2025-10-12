@@ -76,6 +76,7 @@
   (dtc-set 'walls nil)
   (dtc-set 'goal '())
   (dtc-set 'player (cons 10.0 10.0))
+  (dtc-set 'features nil)
   (dtc-set 'entities nil)
   (message "World initialized (%dx%d)" (dtc-get 'width) (dtc-get 'height))
   dtc-world)
@@ -108,39 +109,33 @@
   "Return a list of all integer grid positions currently occupied by entities."
   (mapcar #'dtc-to-grid (mapcar (lambda (obj) (dtc-assoc-get 'pos obj)) (dtc-get 'entities))))
 
-;; (defun dtc-free-p (x y &optional ignore-entities)
-;;   "Return t if X,Y are the integer coordinates of a walkable tile.
-;; The coordinates X and Y are treated as floats, truncated to check the grid cell.
-;; The IGNORE-ENTITIES switch allows entities to not be considered."
-;;   (let ((grid-pos (cons (truncate x) (truncate y))) ; Destination grid position
-;;         (player-grid-pos (dtc-to-grid (dtc-get 'player)))) ; Current player grid position
-
-;;     (and (dtc-in-bounds-p x y)
-;;          ;; 1. Must not be a wall
-;;          (not (member grid-pos (dtc-get 'walls)))
-
-;;          ;; 2. Must not be the grid cell currently occupied by the player
-;;          (not (dtc-pos-equal-p grid-pos player-grid-pos))
-
-;;          ;; 3. Check entities only if requested (i.e., not when checking entity movement)
-;;          (or ignore-entities (not (member grid-pos (dtc-get-occupied-positions)))))))
+(defun dtc-get-blocking-features ()
+  "Return a list of integer positions occupied by features marked as 'blocking."
+  (mapcar (lambda (f) (dtc-assoc-get 'pos f))
+          (cl-remove-if-not (lambda (f) (dtc-assoc-get 'blocking f))
+                            (dtc-get 'features))))
 
 (defun dtc-free-p (x y &optional ignore-entities)
   "Return t if X,Y are the integer coordinates of a walkable tile.
 The coordinates X and Y are treated as floats, truncated to check the grid cell.
 The IGNORE-ENTITIES switch allows entities to not be considered."
   (let ((grid-pos (cons (truncate x) (truncate y)))
-        (player-grid-pos (dtc-to-grid (dtc-get 'player))))
+        (player-grid-pos (dtc-to-grid (dtc-get 'player)))
+        (blocking-features (dtc-get-blocking-features)))
 
     (and (dtc-in-bounds-p x y)
          ;; 1. Must not be a wall (FIX: Use cl-find for value comparison)
          (not (cl-find grid-pos (dtc-get 'walls) :test 'dtc-pos-equal-p))
 
-         ;; 2. Must not be the grid cell currently occupied by the player
+         ;; 2. Must not be a blocking feature <--- NEW CHECK
+         (not (cl-find grid-pos blocking-features :test 'dtc-pos-equal-p))
+
+         ;; 3. Must not be the grid cell currently occupied by the player
          (not (dtc-pos-equal-p grid-pos player-grid-pos))
 
-         ;; 3. Check entities only if requested (FIX: Use cl-find for value comparison)
-         (or ignore-entities (not (cl-find grid-pos (dtc-get-occupied-positions) :test 'dtc-pos-equal-p))))))
+         ;; 4. Check entities only if requested (FIX: Use cl-find for value comparison)
+         (or ignore-entities
+             (not (cl-find grid-pos (dtc-get-occupied-positions) :test 'dtc-pos-equal-p))))))
 
 ;; Checks
 ;; (dtc-get 'width)  ;; 40
@@ -157,7 +152,6 @@ The IGNORE-ENTITIES switch allows entities to not be considered."
 
 (defun dtc-grid-x (pos) "Return truncated X grid coordinate of POS." (truncate (car pos)))
 (defun dtc-grid-y (pos) "Return truncated Y grid coordinate of POS." (truncate (cdr pos)))
-
 
 ;; ---------------------------------------------------------------------------
 ;; Utilities: coordinates and random open tile
@@ -232,6 +226,19 @@ the first available tile, or signal an error if none exist."
                   (1+ (random (max 1 (- h 2))))) walls))
     (dtc-set 'walls walls)))
 
+(defun dtc-create-feature (x y char face &optional properties)
+  "Create a new map feature A-list at integer coordinates X,Y.
+CHAR is the character to use
+FACE is the font-fate to use when drawing
+PROPERTIES is an optional A-list of extra key/value pairs."
+  (let ((feature `((pos . ,(cons x y))
+                   (char . ,char)
+                   (face . ,face)
+                   (blocking . t)))) ; Default to blocking
+    ;; Use cl-union to merge the default properties with any optional ones
+    (cl-union feature properties :test 'eq :key 'car)))
+
+
 (defun dtc-create-entity (char face logic speed)
   "Create a new entity A-list with a random open position.
 CHAR is the character to display, FACE is the font-face to use and LOGIC
@@ -267,7 +274,19 @@ The size of the theatre is given by WIDTH and HEIGHT."
   (dtc-set 'player (cons 1 1))
   ;; goal near bottom-right
   (dtc-set 'goal (cons (- (dtc-get 'width) 2) (- (dtc-get 'height) 2)))
-  ;; enemies
+
+  ;; Create static map features (integer positions)
+  (dtc-set 'features
+           (list
+            ;; A Locked Door (Blocking Feature)
+            (dtc-create-feature 15 8 "D" 'dtc-wall-face '((type . door)))
+
+            ;; A non-blocking item (Must explicitly set blocking to nil)
+            (dtc-create-feature 20 5 "!" 'dtc-goal-face '((type . item) (blocking . nil)))
+
+            ;; A Blocking Crate
+            (dtc-create-feature 30 10 "[]" 'dtc-wall-face)))
+
   (dtc-set 'entities
            (list
             ;; Simple Enemy (old "X")
@@ -355,7 +374,11 @@ The size of the theatre is given by WIDTH and HEIGHT."
                    (entity (cl-find current-pos (dtc-get 'entities)
                                     ;; :key (lambda (obj) (dtc-assoc-get 'pos obj))
                                     :key (lambda (ent) (dtc-to-grid (dtc-assoc-get 'pos ent)))
-                                    :test 'dtc-pos-equal-p)))
+                                    :test 'dtc-pos-equal-p))
+                   ;; Find if any feature is at this position
+                   (feature (cl-find current-pos (dtc-get 'features)
+                                     :key (lambda (f) (dtc-assoc-get 'pos f))
+                                     :test 'dtc-pos-equal-p)))
 
               (cond
                ((dtc-pos-equal-p current-pos player-pos) ; <--- Compare to integer player pos
@@ -363,6 +386,11 @@ The size of the theatre is given by WIDTH and HEIGHT."
 
                ((dtc-pos-equal-p current-pos goal)
                 (insert (propertize "$" 'font-lock-face 'dtc-goal-face)))
+
+               ;; Render Feature
+               (feature
+                (insert (propertize (dtc-assoc-get 'char feature)
+                                    'font-lock-face (dtc-assoc-get 'face feature))))
 
                ((cl-find current-pos walls :test 'dtc-pos-equal-p)
                 (insert (propertize "#" 'font-lock-face 'dtc-wall-face)))
@@ -515,13 +543,6 @@ Details are stored in ENTITY"
   (dtc-check-state)
   (dtc-render))
 
-;; (defun dtc-tick ()
-;;   "Advance the game one tick: move enemies, check collisions, render, and increment turn."
-;;   (dtc-update-entities)
-;;   (dtc-inc-turn)
-;;   (dtc-check-state)
-;;   (dtc-render))
-
 (defun dtc-inc-turn ()
   "Incrument the turn counter."
   (dtc-set 'turn (1+ (dtc-get 'turn))))
@@ -582,21 +603,6 @@ Details are stored in ENTITY"
 ;; ---------------------------------------------------------------------------
 ;; DTC world reset (safe and clean) -------------------------
 ;; ---------------------------------------------------------------------------
-;; (defun dtc-reset-world ()
-;;   "Reset the Drone Theatre Command world to a fresh state."
-;;   (interactive)
-;;   (let* ()
-;;     (clrhash dtc-world)
-;;     (dtc-init-world)
-;;     (dtc-generate-basic-world)
-
-;;     ;; Optional: clear and redraw
-;;     (when (fboundp 'dtc-render)
-;;       (dtc-render))
-
-;;     ;; FIX: Replaced unbound variables w, h, num-enemies
-;;     (message "DTC world reset: %dx%d" (dtc-get 'width) (dtc-get 'height))))
-
 (defun dtc-reset-world ()
   "Reset the Drone Theatre Command world to a fresh state."
   (interactive)
