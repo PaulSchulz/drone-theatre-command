@@ -341,6 +341,52 @@ The size of the theatre is given by WIDTH and HEIGHT."
 ;; (dtc-random-open-tile) ;nil
 ;; (dtc-generate-enemies (+ 3 (random 3))) ; (nil nil nil)
 
+;; --------------------------------------------------------------------------
+;; Save/Restore Logic
+;; --------------------------------------------------------------------------
+;; Not yet enabled.
+(defvar dtc-save-file "~/.emacs.d/dtc-save.el"
+  "Path to the file used for saving and restoring the game state.")
+
+(defun dtc-get-world-as-list ()
+  "Convert the 'dtc-world' hash table to a property list (plist)."
+  (let (plist)
+    (maphash (lambda (key value)
+               (push key plist)
+               (push value plist))
+             dtc-world)
+    plist))
+
+(defun dtc-set-world-from-list (plist)
+  "Clear 'dtc-world' and populate it from a property list (PLIST)."
+  (clrhash dtc-world)
+  (while plist
+    (puthash (pop plist) (pop plist) dtc-world)))
+
+(defun dtc-save-game ()
+  "Save the current state of the game world to a file."
+  (interactive)
+  (dtc-stop-main-loop) ; Stop the game loop before saving
+  (let ((world-list (cl-copy-list (dtc-get-world-as-list)))) ; Convert hash table to plist
+    (with-temp-file dtc-save-file
+      (insert (prin1-to-string world-list))
+      (message "Game saved successfully to %s" dtc-save-file)))
+  (dtc-start-main-loop)) ; Restart the game loop after saving
+
+(defun dtc-restore-game ()
+  "Restore the game state from the save file."
+  (interactive)
+  (dtc-stop-main-loop) ; Stop the game loop during restore
+  (if (file-exists-p dtc-save-file)
+      (let ((saved-list (with-temp-buffer
+                          (insert-file-contents dtc-save-file)
+                          (read (current-buffer)))))
+        (dtc-set-world-from-list saved-list) ; Convert plist back to hash table
+        (message "Game state restored from %s" dtc-save-file)
+        (dtc-render)
+        (dtc-start-main-loop))
+    (message "No save file found at %s" dtc-save-file)))
+
 ;; ---------------------------------------------------------------------------
 ;; Rendering
 ;; ---------------------------------------------------------------------------
@@ -618,7 +664,7 @@ Details are stored in ENTITY"
 ;;     (dtc-render)))
 
 (defun dtc-auto-tick ()
-  "Process automatic game updates, run by the dtc-timer."
+  "Process automatic actions, run by the 'dtc-timer'."
   (with-current-buffer dtc-buffer-name
     ;; Temporarily disable read-only mode for the *DTC* buffer
     (let ((inhibit-read-only t))
