@@ -23,6 +23,7 @@
     (define-key map (kbd "<down>")  #'dtc-move-down)
     (define-key map (kbd "<left>")  #'dtc-move-left)
     (define-key map (kbd "<right>") #'dtc-move-right)
+    (define-key map (kbd "p")       #'dtc-toggle-pause)
     (define-key map (kbd "q")       #'dtc-quit)
     map)
   "Keymap for DTC minor mode.")
@@ -78,6 +79,8 @@
   (dtc-set 'player (cons 10.0 10.0))
   (dtc-set 'features nil)
   (dtc-set 'entities nil)
+  (dtc-set 'paused nil)
+  (dtc-set 'blocking-cache nil)
   (message "World initialized (%dx%d)" (dtc-get 'width) (dtc-get 'height))
   dtc-world)
 
@@ -251,58 +254,90 @@ assumed to be a float."
       (logic . ,logic)
       (speed . ,speed))))
 
-;; (dtc-create-entity "%"  'dtc-enemy-face nil) ;; ((pos 9 . 13) (char . "%") (face . dtc-enemy-face) (logic))
+(defun dtc-create-wall-feature (x y)
+  "Helper to create a standard blocking wall feature (#) ay X,Y."
+  ;; Calls the existing dtc-create-feature, ensuring 'blocking is true by default
+  (dtc-create-feature x y "#" 'dtc-wall-face '((type . wall))))
 
 (defun dtc-generate-basic-world (&optional width height)
   "Create a basic world layout: walls, player, goal, enemies.
 The size of the theatre is given by WIDTH and HEIGHT."
   (dtc-init-world width height)
-  (dtc-set 'width (or width (dtc-get 'width)))
-  (dtc-set 'height (or height (dtc-get 'height)))
 
-  ;; ;; Fill walls (example: border walls)
-  ;; (dotimes (x width)
-  ;;   (push (cons x 0) walls)
-  ;;   (push (cons x (1- h)) walls))
-  ;; (dotimes (y height)
-  ;;   (push (cons 0 y) walls)
-  ;;   (push (cons (1- w) y) walls))
+  (let* ((w (dtc-get 'width))
+         (h (dtc-get 'height))
+         (current-features (dtc-get 'features)))
 
-  ;; walls - a moderate number scaled to area
-  (dtc-generate-walls (max 10 (/ (* (dtc-get 'width) (dtc-get 'height)) 20)))
-  ;; player near top-left
-  (dtc-set 'player (cons 1 1))
-  ;; goal near bottom-right
-  (dtc-set 'goal (cons (- (dtc-get 'width) 2) (- (dtc-get 'height) 2)))
+    ;; (dtc-set 'width (or width (dtc-get 'width)))
+    ;; (dtc-set 'height (or height (dtc-get 'height)))
 
-  ;; Create static map features (integer positions)
-  (dtc-set 'features
-           (list
-            ;; A Locked Door (Blocking Feature)
-            (dtc-create-feature 15 8 "D" 'dtc-wall-face '((type . door)))
+    ;; ;; Fill walls (example: border walls)
+    ;; (dotimes (x width)
+    ;;   (push (cons x 0) walls)
+    ;;   (push (cons x (1- h)) walls))
+    ;; (dotimes (y height)
+    ;;   (push (cons 0 y) walls)
+    ;;   (push (cons (1- w) y) walls))
 
-            ;; A non-blocking item (Must explicitly set blocking to nil)
-            (dtc-create-feature 20 5 "!" 'dtc-goal-face '((type . item) (blocking . nil)))
+    (dtc-set 'walls nil)
 
-            ;; A Blocking Crate
-            (dtc-create-feature 30 10 "[]" 'dtc-wall-face)))
+    ;; --- NEW WALL GENERATION LOGIC: GENERATE FEATURES ---
+    ;; 1. Border Walls
+    ;; (dotimes (x w)
+    ;;   (push (dtc-create-wall-feature x 0) current-features)
+    ;;   (push (dtc-create-wall-feature x (1- h)) current-features))
+    ;; (dotimes (y h)
+    ;;   (push (dtc-create-wall-feature 0 y) current-features)
+    ;;   (push (dtc-create-wall-feature (1- w) y) current-features))
 
-  (dtc-set 'entities
-           (list
-            ;; Simple Enemy (old "X")
-            (dtc-create-entity "X" 'dtc-enemy-face 'dtc-chase-logic 1.0)
-            (dtc-create-entity "X" 'dtc-enemy-face 'dtc-chase-logic 1.0)
+    ;; 2. Interior Walls/Obstacles
+    (push (dtc-create-wall-feature 15 5) current-features)
+    (push (dtc-create-wall-feature 15 6) current-features)
+    (push (dtc-create-wall-feature 15 7) current-features)
 
-            ;; Heavy Enemy (new type, different face/logic)
-            (dtc-create-entity "H" 'dtc-heavy-enemy-face 'dtc-chase-logic 1.5)
+    ;; 3. Add existing special features (items, doors, etc.)
+    (push (dtc-create-feature 10 10 "!" 'dtc-goal-face '((type . item) (blocking . nil))) current-features)
+    (push (dtc-create-feature 20 15 "D" 'dtc-wall-face '((type . door))) current-features)
 
-            ;; Friendly Guard (new type, different character/logic)
-            (dtc-create-entity "G" 'dtc-guard-face 'dtc-patrol-logic 0.5)
-            (dtc-create-entity "G" 'dtc-guard-face 'dtc-patrol-logic 0.5)))
-  (dtc-set 'score 0)
-  (dtc-set 'turn 0)
-  (dtc-get 'player))
+    ;; Save the unified list of walls and features
+    (dtc-set 'features current-features)
 
+    ;; walls - a moderate number scaled to area
+    ;; (dtc-generate-walls (max 10 (/ (* (dtc-get 'width) (dtc-get 'height)) 20)))
+
+    ;; player near top-left
+    (dtc-set 'player (cons 1 1))
+    ;; goal near bottom-right
+    (dtc-set 'goal (cons (- (dtc-get 'width) 2) (- (dtc-get 'height) 2)))
+
+    ;; Create static map features (integer positions)
+    (dtc-set 'features
+             (list
+              ;; A Locked Door (Blocking Feature)
+              (dtc-create-feature 15 8 "D" 'dtc-wall-face '((type . door)))
+
+              ;; A non-blocking item (Must explicitly set blocking to nil)
+              (dtc-create-feature 20 5 "!" 'dtc-goal-face '((type . item) (blocking . nil)))
+
+              ;; A Blocking Crate
+              (dtc-create-feature 30 10 "[]" 'dtc-wall-face)))
+
+    (dtc-set 'entities
+             (list
+              ;; Simple Enemy (old "X")
+              (dtc-create-entity "X" 'dtc-enemy-face 'dtc-chase-logic 1.0)
+              (dtc-create-entity "X" 'dtc-enemy-face 'dtc-chase-logic 1.0)
+
+              ;; Heavy Enemy (new type, different face/logic)
+              (dtc-create-entity "H" 'dtc-heavy-enemy-face 'dtc-chase-logic 1.5)
+
+              ;; Friendly Guard (new type, different character/logic)
+              (dtc-create-entity "G" 'dtc-guard-face 'dtc-patrol-logic 0.5)
+              (dtc-create-entity "G" 'dtc-guard-face 'dtc-patrol-logic 0.5)))
+    (dtc-set 'score 0)
+    (dtc-set 'turn 0)
+    (dtc-get 'player))
+  )
 ;; (dtc-random-open-tile) ;nil
 ;; (dtc-generate-enemies (+ 3 (random 3))) ; (nil nil nil)
 
@@ -405,11 +440,46 @@ The size of the theatre is given by WIDTH and HEIGHT."
                )))
           (insert "\n")))
       (goto-char (point-min))
+      (insert "Turn: " (number-to-string (dtc-get 'turn))
+              " | Score: " (number-to-string (dtc-get 'score))) ;
+
+      (when (dtc-get 'paused) ; <--- NEW: Check the pause flag
+        (goto-char (point-max))
+        (insert "\n\nPAUSED"))
+
       (setq buffer-read-only t)
       (dtc-mode 1)
       (display-buffer buf))
     ;; optionally return buffer
     buf))
+
+;; ---------------------------------------------------------------------------
+;; Interaction
+;; ---------------------------------------------------------------------------
+(defun dtc-interact-at (pos)
+  "Handle interaction when the player lands on an integer position POS."
+  (let ((features (dtc-get 'features))
+        (feature nil))
+
+    ;; 1. Find the feature at the position
+    (setq feature (cl-find pos features
+                           :key (lambda (f) (dtc-assoc-get 'pos f))
+                           :test 'dtc-pos-equal-p))
+
+    (when feature
+      (let ((type (dtc-assoc-get 'type feature)))
+        (message "Interacted with a %S feature at %S" type pos)
+
+        ;; Example: Pickup logic for items
+        (when (eq type 'item)
+          ;; Increment the score for picking up an item
+          (dtc-set 'score (1+ (dtc-get 'score)))
+          (message "Picked up an item! Score: %d" (dtc-get 'score))
+
+          ;; Remove the feature from the world
+          (dtc-set 'features (cl-remove feature features :test 'equal))
+          t)))))
+
 
 ;; ---------------------------------------------------------------------------
 ;; Movement: player
@@ -423,20 +493,13 @@ The size of the theatre is given by WIDTH and HEIGHT."
     ;; Check collision against the new grid cell the player moves into
     (when (dtc-free-p (dtc-grid-x new-pos) (dtc-grid-y new-pos))
       (dtc-set 'player new-pos) ; Store the new float position
+      (dtc-player-tick)
       t)))
 
-(defun dtc-move-up ()
-  "Move player up."
-  (interactive) (when (dtc-move-player 0 -1) (dtc-player-tick)))
-(defun dtc-move-down ()
-  "Move player down."
-  (interactive) (when (dtc-move-player 0  1) (dtc-player-tick)))
-(defun dtc-move-left ()
-  "Move player left."
-  (interactive) (when (dtc-move-player -1 0) (dtc-player-tick)))
-(defun dtc-move-right ()
-  "Move player right."
-  (interactive) (when (dtc-move-player  1 0) (dtc-player-tick)))
+(defun dtc-move-up () "Move player up." (interactive) (dtc-move-player 0 -1))
+(defun dtc-move-down () "Move player down." (interactive) (dtc-move-player 0  1))
+(defun dtc-move-left ()  "Move player left." (interactive) (dtc-move-player -1 0))
+(defun dtc-move-right () "Move player right." (interactive) (dtc-move-player  1 0))
 
 ;; ---------------------------------------------------------------------------
 ;; Enemy movement (simple chase behaviour)
@@ -526,19 +589,49 @@ Details are stored in ENTITY"
     (setq dtc-timer nil)
     (message "DTC automatic loop stopped.")))
 
+(defun dtc-toggle-pause ()
+  "Toggle the game's pause state by stopping or restarting the main timer loop."
+  (interactive)
+  (if dtc-timer
+      (progn
+        ;; Currently running, so pause it
+        (dtc-stop-main-loop)
+        (dtc-set 'paused t) ; Set flag for visual indicator
+        (dtc-render)         ; Force a render to show the PAUSED message
+        (message "Game PAUSED."))
+    (progn
+      ;; Currently paused (dtc-timer is nil), so resume it
+      (dtc-start-main-loop)
+      (dtc-set 'paused nil) ; Clear pause flag
+      (dtc-render)
+      (message "Game RESUMED."))))
+
 ;;---------------------------------------------------------------------------
 ;; Tick/update loop
 ;; ---------------------------------------------------------------------------
+;; (defun dtc-auto-tick ()
+;;   "The game loop called by the timer. Update the entities and renders the screen."
+;;   ;; Only update and render if the game buffer is visible (optional, but good practice)
+;;   (when (get-buffer dtc-buffer-name)
+;;     (dtc-update-entities)
+;;     (dtc-check-state)
+;;     (dtc-render)))
+
 (defun dtc-auto-tick ()
-  "The game loop called by the timer. Update the entities and renders the screen."
-  ;; Only update and render if the game buffer is visible (optional, but good practice)
-  (when (get-buffer dtc-buffer-name)
-    (dtc-update-entities)
-    (dtc-check-state)
-    (dtc-render)))
+  "Process automatic game updates, run by the dtc-timer."
+  (with-current-buffer dtc-buffer-name
+    ;; Temporarily disable read-only mode for the *DTC* buffer
+    (let ((inhibit-read-only t))
+      (dtc-move-enemies)
+      (dtc-set 'turn (1+ (dtc-get 'turn)))
+      (dtc-render)
+      (dtc-check-win))))
 
 (defun dtc-player-tick ()
   "Called after the player is successfully moved. Increments turn and triggers one entity update."
+  (interactive)
+  (dtc-interact-at (dtc-to-grid (dtc-get 'player)))
+
   (dtc-inc-turn) ; Only increment turn on player move
   (dtc-check-state)
   (dtc-render))
