@@ -150,7 +150,7 @@ The IGNORE-ENTITIES switch allows entities to not be considered."
   (cons x y))
 
 (defun dtc-x (pos) "Return X coordinate of POS." (car pos))
-(defun dtc-y (pos) "Retufn Y coordinate of POS." (cdr pos))
+(defun dtc-y (pos) "Return Y coordinate of POS." (cdr pos))
 
 (defun dtc-in-bounds-p (x y)
   "Return t when X,Y are within the playfield."
@@ -456,7 +456,7 @@ Details are stored in ENTITY"
                      (dotimes (_ (truncate speed) entity)
                        (setq entity (funcall logic-fn entity))))
                    entity)
-                 (dtc-get 'entities)))) ; <--- FIX: This was moved inside the mapcar call
+                 (dtc-get 'entities))))
 
     (dtc-set 'entities updated-entities)))
 
@@ -567,20 +567,32 @@ Details are stored in ENTITY"
 ;; ---------------------------------------------------------------------------
 ;; DTC world reset (safe and clean) -------------------------
 ;; ---------------------------------------------------------------------------
+;; (defun dtc-reset-world ()
+;;   "Reset the Drone Theatre Command world to a fresh state."
+;;   (interactive)
+;;   (let* ()
+;;     (clrhash dtc-world)
+;;     (dtc-init-world)
+;;     (dtc-generate-basic-world)
+
+;;     ;; Optional: clear and redraw
+;;     (when (fboundp 'dtc-render)
+;;       (dtc-render))
+
+;;     ;; FIX: Replaced unbound variables w, h, num-enemies
+;;     (message "DTC world reset: %dx%d" (dtc-get 'width) (dtc-get 'height))))
+
 (defun dtc-reset-world ()
   "Reset the Drone Theatre Command world to a fresh state."
   (interactive)
-  (let* ()
-    (clrhash dtc-world)
-    (dtc-init-world)
-    (dtc-generate-basic-world)
+  (clrhash dtc-world)
+  (dtc-init-world)
+  (dtc-generate-basic-world)
 
-    ;; Optional: clear and redraw
-    (when (fboundp 'dtc-render)
-      (dtc-render))
+  (when (fboundp 'dtc-render)
+    (dtc-render))
 
-    ;; FIX: Replaced unbound variables w, h, num-enemies
-    (message "DTC world reset: %dx%d" (dtc-get 'width) (dtc-get 'height))))
+  (message "DTC world reset: %dx%d" (dtc-get 'width) (dtc-get 'height)))
 
 ;; --- Run it immediately ---
 ;; (dtc-reset-world)
