@@ -10,6 +10,7 @@
 ;;;   Put something here.
 ;;; Code:
 ;;;   Put something here.
+(require 'cl-lib)
 
 ;; ---------------------------------------------------------------------------
 ;; Keymap and minor mode (buffer-local)
@@ -22,6 +23,7 @@
     (define-key map (kbd "<right>") #'dtc-move-right)
     (define-key map (kbd "p")       #'dtc-toggle-pause)
     (define-key map (kbd "q")       #'dtc-quit)
+    (define-key map (kbd "h")       #'dtc-toggle-help)
     map)
   "Keymap for DTC minor mode.")
 
@@ -60,6 +62,101 @@
     buf))
 
 ;; ---------------------------------------------------------------------------
+;; Help screen
+;; ---------------------------------------------------------------------------
+(defvar dtc-feature-list
+  (list
+   '("Tree - impassable"   "T")
+   '("Tree - passable"     "t")
+   '("Crater"              "O")
+   '("Raod"                "=")
+   ))
+
+(defvar dtc-feature-list
+  (list
+   '("Tree - impassable"   "T")
+   '("Tree - passable"     "t")
+   '("Crater"              "O")
+   '("Raod"                "=")
+   ))
+
+(defconst dtc-help-text
+  "---------- DRONE THEATRE COMMAND HELP ----------
+Turn: %d | Score: %d
+
+CONTROLS:
+  <up>/<down>/<left>/<right>: Move Player
+  p: Pause/resume game
+  q: Quit Game
+  h: Show/Hide this Help Screen
+
+ENTITLES: These can move around the map.
+  @: Player
+  %%: Enemy Observation Drone
+  x: Small Bomber Drone
+  X: Large Bomber Drone
+  ^: FPV Drone
+  #: Supply Drone
+
+FEATURES:
+  T: Trees - Impassable
+  t: Trees - Passable
+  O: Crater
+  =: Road
+
+Press h to return to the game..."
+  "The fixed content of the DTC help screen, with format specifiers.")
+
+(defun dtc-show-help ()
+  "Pause the game, display help, and prompt the user to continue."
+  (interactive)
+  (let ((was-running dtc-timer))
+
+    ;; 1. If the game is running, stop the timer and set the paused flag.
+    (when was-running
+      (dtc-stop-main-loop)
+      (dtc-set 'paused t))
+
+    (with-current-buffer (get-buffer-create dtc-buffer-name)
+      (let ((inhibit-read-only t))
+        (erase-buffer) ; Clear the game display
+        (insert (format dtc-help-text
+                        (dtc-get 'turn)
+                        (dtc-get 'score))))
+
+      (goto-char (point-min))
+      (setq buffer-read-only t)
+      (dtc-mode 1)
+      (display-buffer (current-buffer)))
+
+    ;; 2. Set a temporary 'help-displayed' flag to track the state
+    (dtc-set 'help-displayed t)
+    (message "DTC Help Displayed. Press 'h' again to continue.")))
+
+(defun dtc-toggle-help ()
+  "Handles the H key press: shows help or restores the game."
+  (interactive)
+  (if (dtc-get 'help-active)
+      (with-current-buffer (get-buffer-create dtc-buffer-name) ;; Ensure we are in the game buffer
+        (let ((inhibit-read-only t))                           ;; <-- TEMPORARILY MAKE WRITABLE
+          ;; If help is active, restore the state
+          (dtc-set 'help-active nil)
+
+          ;; Only restart the loop if the game wasn't paused with 'p'
+          (unless (dtc-get 'paused)
+            (dtc-start-main-loop))
+
+          ;; Re-render the game map (dtc-render will set read-only again)
+          (dtc-render)
+          (message "Game resumed.")))
+    (let ()
+      (dtc-set 'help-active t)
+      (dtc-show-help))
+    ))
+
+;; If help is NOT active, show the help screen (dtc-show-help handles read-only)
+
+;; ---------------------------------------------------------------------------
 ;; World storage helpers
 ;; ---------------------------------------------------------------------------
 (defvar dtc-world nil "Hash table holding the entire DTC world state.")
@@ -75,6 +172,7 @@
   (dtc-set 'features nil)
   (dtc-set 'entities nil)
   (dtc-set 'paused nil)
+  (dtc-set 'help-active nil)
   (dtc-set 'blocking-cache nil)
   (message "World initialized (%dx%d)" (dtc-get 'width) (dtc-get 'height))
   dtc-world)
@@ -214,6 +312,124 @@ the first available tile, or signal an error if none exist."
 ;; (dtc-random-open-tile) ; (19 . 19)
 
 ;; ---------------------------------------------------------------------------
+;; World generation - utilities
+;; ---------------------------------------------------------------------------
+(defun dtc-add-feature (pos name display-info &rest properties)
+  "Create a new feature object and add it to the 'features list in dtc-world.
+POS is a cons cell (x . y) for the feature's floating-point position.
+NAME is a keyword (e.g., 'tree).
+DISPLAY-INFO is a list (char color) for rendering.
+PROPERTIES are a plist for additional feature attributes (e.g., :blocking t)."
+
+  (let ((new-feature (list :pos pos
+                           :name name
+                           :display display-info)))
+
+    ;; Append the rest of the properties list (e.g., :blocking t)
+    (while properties
+      (setq new-feature (append new-feature (list (car properties) (cadr properties))))
+      (setq properties (cddr properties)))
+
+    ;; Add the new feature to the existing list of features
+    (dtc-set 'features (cons new-feature (dtc-get 'features)))))
+
+;; ---------------------------------------------------------------------------
+;; World generation - woods
+;; ---------------------------------------------------------------------------
+(defun dtc-distance (pos1 pos2)
+  "Calculate the Euclidean distance between two cons-cell positions POS1,POS2 (x y)."
+  (sqrt (+ (expt (- (car pos1) (car pos2)) 2)
+           (expt (- (cdr pos1) (cdr pos2)) 2))))
+
+(defun dtc-distance-point-to-line (x0 y0 x1 y1 x2 y2)
+  "Calculate the perpendicular distance from point (X0, Y0) a line.
+The line is defined as passing through P1(X1, Y1) and P2(X2, Y2).
+All inputs should be floats."
+  (let* (;; --- 1. Derive A, B, C for the line Ax + By + C = 0 ---
+         ;; A = y2 - y1
+         (A (- y2 y1))
+         ;; B = x1 - x2
+         (B (- x1 x2))
+         ;; C = x2*y1 - x1*y2 (simplified from C = -(A*x1 + B*y1))
+         (C (- (* x2 y1) (* x1 y2)))
+
+         ;; --- 2. Apply Distance Formula: d = |A*x0 + B*y0 + C| / sqrt(A^2 + B^2) ---
+
+         ;; Numerator: |A*x0 + B*y0 + C|
+         (numerator (abs (+ (* A x0) (* B y0) C)))
+
+         ;; Denominator: sqrt(A^2 + B^2)
+         (denominator (sqrt (+ (* A A) (* B B)))))
+
+    ;; Handle the edge case where P1 and P2 are the same point (line has zero length).
+    (if (= denominator 0.0)
+        ;; The distance is just the Euclidean distance between P0 and P1.
+        (sqrt (+ (expt (- x0 x1) 2) (expt (- y0 y1) 2)))
+      ;; Otherwise, calculate the perpendicular distance.
+      (/ numerator denominator))))
+
+;; Test
+;; (dtc-distance-point-to-line 0.0 0.0 1.0 0.0 1.0 1.0) ;; 1.0 <- Should be 1.0
+
+(defun dtc-generate-trees (center-x center-y radius density)
+  "Generate trees in a cluster around (CENTER-X, CENTER-Y) with a given RADIUS.
+DENSITY is a float from 0.0 to 1.0 (e.g., 0.5 for 50% chance)."
+  (let* ((world-width (dtc-get 'width))
+         (world-height (dtc-get 'height))
+         (center (cons center-x center-y)))
+
+    ;; Iterate over every grid cell in the world
+    (dotimes (y world-height)
+      (dotimes (x world-width)
+        (let* ((grid-pos (cons (float x) (float y)))
+               (dist (dtc-distance grid-pos center)))
+
+          ;; Check 1: Is the tile within the specified radius?
+          (when (< dist radius)
+
+            ;; Check 2: Is the tile currently free/empty of other features?
+            ;; We can check if dtc-free-p is TRUE and we ignore entities (only
+            ;; checking static features)
+            (when (dtc-free-p x y t)
+
+              ;; Check 3: Random chance based on density
+              (when (< (cl-random 1.0) density)
+                ;; Add the tree feature
+                (dtc-set 'features (cons
+                                    (dtc-create-feature x y "T" 'dtc-tree-face)
+                                    (dtc-get 'features)))))))))))
+
+;; (dtc-add-feature grid-pos 'tree '("T" "green") :blocking t) ;
+;; (dtc-create-feature 12 12 "T" 'dtc-tree-face) ;
+'(ignore
+  (dtc-set 'features (cons
+                      (dtc-create-feature 13 12 "T" 'dtc-tree-face)
+                      (dtc-get 'features))) ;;
+  )
+;; (dtc-render) ;
+;; (cl-random 1.0)
+
+(defun dtc-generate-road (x1 y1 x2 y2)
+  "Generates a road ('=') feature between two integer grid points (X1, Y1) and (X2, Y2)."
+  (interactive "nStart X: \nnStart Y: \nnEnd X: \nnEnd Y: ")
+
+  (let* ((world-width (dtc-get 'width))
+         (world-height (dtc-get 'height)))
+
+    (dotimes (y world-height)
+      (dotimes (x world-width)
+        (let* ((dist (dtc-distance-point-to-line
+                      (float x) (float y)
+                      x1 y1 x2 y2)))
+
+          ;; Check 1: Is the tile within the specified radius?
+          (when (< dist 0.5)
+            (when (dtc-free-p x y t)
+              (dtc-set 'features (cons
+                                  (dtc-create-feature x y "=" 'dtc-road-face)
+                                  (dtc-get 'features))))))))))
+
+;; ---------------------------------------------------------------------------
 ;; World generation
 ;; ---------------------------------------------------------------------------
 (defun dtc-generate-walls (count)
@@ -284,6 +500,14 @@ The size of the theatre is given by WIDTH and HEIGHT."
     ;; Save the unified list of walls and features
     (dtc-set 'features current-features)
 
+    (dtc-generate-road  0.0 0.0 20.0 20.0)
+
+    (dtc-generate-trees 20  8 4 0.8)
+    (dtc-generate-trees 25 10 4 0.8)
+    (dtc-generate-trees 30 12 4 0.5)
+    (dtc-generate-trees 35 14 4 0.2)
+    (dtc-generate-trees 40 16 4 0.8)
+
     (dtc-set 'entities
              (list
               ;; Simple Enemy Drone
@@ -349,7 +573,8 @@ The size of the theatre is given by WIDTH and HEIGHT."
 
 ;; If any face chnages are made, run M-x custom-theme-set-faces to reload the
 ;; face definitions (as these are cached.)
-;; Map elements
+
+;; Features
 (defface dtc-wall-face
   '((t (:foreground "gray" :weight semi-bold)))
   "Face for the wall character ('U') in my game."
@@ -363,6 +588,11 @@ The size of the theatre is given by WIDTH and HEIGHT."
 (defface dtc-floor-face
   '((t (:foreground "white smoke"))) ; A subtle, distinct color for the floor
   "Face for the floor character ('.') in my game."
+  :group 'dtc)
+
+(defface dtc-road-face
+  '((t (:foreground "brown" :weight semi-bold)))
+  "Face for the wall character ('U') in my game."
   :group 'dtc)
 
 ;; Entities

@@ -1,6 +1,7 @@
 * Drone Theatre Command
 
-A strategy for emacs (written in elisp) that simulates a modern battle field with drones.
+A strategy game for emacs (written in elisp) that simulates a modern battle
+field with drones.
 
 [[file:./screenshot.png]]
 
