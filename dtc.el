@@ -161,6 +161,19 @@ Press h to return to the game..."
 ;; ---------------------------------------------------------------------------
 (defvar dtc-world nil "Hash table holding the entire DTC world state.")
 
+(defun dtc-clear-world ()
+  "Reset the world."
+  (clrhash dtc-world))
+
+(defun dtc-get (key)
+  "Return KEY from `dtc-world`."
+  (gethash key dtc-world))
+
+(defun dtc-set (key value)
+  "Set KEY to VALUE in `dtc-world`."
+  (puthash key value dtc-world)
+  value)
+
 (defun dtc-init-world (&optional width height)
   "Create and initialize `dtc-world`. WIDTH and HEIGHT default to 100x50."
   (setq dtc-world (make-hash-table :test 'equal))
@@ -176,19 +189,6 @@ Press h to return to the game..."
   (dtc-set 'blocking-cache nil)
   (message "World initialized (%dx%d)" (dtc-get 'width) (dtc-get 'height))
   dtc-world)
-
-(defun dtc-clear-world ()
-  "Reset the world."
-  (clrhash dtc-world))
-
-(defun dtc-get (key)
-  "Return KEY from `dtc-world`."
-  (gethash key dtc-world))
-
-(defun dtc-set (key value)
-  "Set KEY to VALUE in `dtc-world`."
-  (puthash key value dtc-world)
-  value)
 
 (defun dtc-assoc-get (key alist)
   "Get the value associated with KEY from the A-list ALIST."
@@ -208,7 +208,6 @@ Press h to return to the game..."
                  (mapcar (lambda (obj) (dtc-assoc-get 'pos obj)) (dtc-get 'entities)))))
     ;; Add the player's position to the list of occupied tiles
     (cons (dtc-to-grid (dtc-get 'player)) entity-positions)))
-
 
 (defun dtc-get-blocking-features ()
   "Return a list of integer positions occupied by features marked as 'blocking."
@@ -371,6 +370,36 @@ All inputs should be floats."
 ;; Test
 ;; (dtc-distance-point-to-line 0.0 0.0 1.0 0.0 1.0 1.0) ;; 1.0 <- Should be 1.0
 
+(defun dtc-line-parameter-s (x0 y0 x1 y1 x2 y2)
+  "Calculates the scalar parameter 's' that indicates the position of the
+perpendicular foot from (X0, Y0) onto the infinite line defined by (X1, Y1) and (X2, Y2).
+s=0 at (X1, Y1) and s=1 at (X2, Y2). All inputs should be floats."
+  (let* (;; Vector AP components
+         (ap-x (- x0 x1))
+         (ap-y (- y0 y1))
+
+         ;; Vector AB components
+         (ab-x (- x2 x1))
+         (ab-y (- y2 y1))
+
+         ;; Numerator: Dot product of vector AP and vector AB
+         ;; (x0 - x1)(x2 - x1) + (y0 - y1)(y2 - y1)
+         (numerator (+ (* ap-x ab-x)
+                       (* ap-y ab-y)))
+
+         ;; Denominator: Squared magnitude (length) of vector AB
+         ;; (x2 - x1)^2 + (y2 - y1)^2
+         (denominator (+ (expt ab-x 2)
+                         (expt ab-y 2))))
+
+    ;; Handle the case where the two line points are the same
+    (if (= denominator 0.0)
+        ;; If A and B are the same, the line has zero length.
+        ;; We can just return 0.0 or 1.0 (or nil, depending on required error handling)
+        0.0
+      ;; Otherwise, calculate the parameter s
+      (/ numerator denominator))))
+
 (defun dtc-generate-trees (center-x center-y radius density)
   "Generate trees in a cluster around (CENTER-X, CENTER-Y) with a given RADIUS.
 DENSITY is a float from 0.0 to 1.0 (e.g., 0.5 for 50% chance)."
@@ -396,7 +425,9 @@ DENSITY is a float from 0.0 to 1.0 (e.g., 0.5 for 50% chance)."
               (when (< (cl-random 1.0) density)
                 ;; Add the tree feature
                 (dtc-set 'features (cons
-                                    (dtc-create-feature x y "T" 'dtc-tree-face)
+                                    (dtc-create-feature x y "T" 'dtc-tree-face
+                                                        '((blocking . t))
+                                                        )
                                     (dtc-get 'features)))))))))))
 
 ;; (dtc-add-feature grid-pos 'tree '("T" "green") :blocking t) ;
@@ -420,13 +451,19 @@ DENSITY is a float from 0.0 to 1.0 (e.g., 0.5 for 50% chance)."
       (dotimes (x world-width)
         (let* ((dist (dtc-distance-point-to-line
                       (float x) (float y)
-                      x1 y1 x2 y2)))
+                      x1 y1 x2 y2))
+               (s (dtc-line-parameter-s
+                   (float x) (float y)
+                   x1 y1 x2 y2)))
 
           ;; Check 1: Is the tile within the specified radius?
-          (when (< dist 0.5)
+          (when (and (< dist 0.5)
+                     (>= s 0.0)
+                     (<= s 1.0))
             (when (dtc-free-p x y t)
               (dtc-set 'features (cons
-                                  (dtc-create-feature x y "=" 'dtc-road-face)
+                                  (dtc-create-feature x y "=" 'dtc-road-face
+                                                      '((blocking . nil)))
                                   (dtc-get 'features))))))))))
 
 ;; ---------------------------------------------------------------------------
@@ -450,7 +487,8 @@ PROPERTIES is an optional A-list of extra key/value pairs."
   (let ((feature `((pos . ,(cons x y))
                    (char . ,char)
                    (face . ,face)
-                   (blocking . t)))) ; Default to blocking
+                   ;;(blocking . t)
+                   ))) ; Default to blocking
     ;; Use cl-union to merge the default properties with any optional ones
     (cl-union feature properties :test 'eq :key 'car)))
 
@@ -501,6 +539,7 @@ The size of the theatre is given by WIDTH and HEIGHT."
     (dtc-set 'features current-features)
 
     (dtc-generate-road  0.0 0.0 20.0 20.0)
+    (dtc-generate-road  10.0 10.0 100.0 0.0)
 
     (dtc-generate-trees 20  8 4 0.8)
     (dtc-generate-trees 25 10 4 0.8)
@@ -592,6 +631,11 @@ The size of the theatre is given by WIDTH and HEIGHT."
 
 (defface dtc-road-face
   '((t (:foreground "brown" :weight semi-bold)))
+  "Face for the wall character ('U') in my game."
+  :group 'dtc)
+
+(defface dtc-tree-face
+  '((t (:foreground "dark  green" :weight semi-bold)))
   "Face for the wall character ('U') in my game."
   :group 'dtc)
 
