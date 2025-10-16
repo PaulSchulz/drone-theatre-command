@@ -1,0 +1,7 @@
+* Development Notes
+
+** Next steps
+- Convert world hash to use keywork keys - 'score -> :score
+- Make similar change to entity and property data
+- Create drone AI that makes it fly around and search.
+  
